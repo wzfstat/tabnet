@@ -353,7 +353,7 @@ def check_unique_type(y):
         )
 
 
-def infer_output_dim(y_train):
+def infer_output_dim(y_train, y_has_weight=False):
     """
     Infer output_dim from targets
 
@@ -361,6 +361,8 @@ def infer_output_dim(y_train):
     ----------
     y_train : np.array
         Training targets
+    y_has_weight: bool
+        True if y contains case-wise training weights as its last column
 
     Returns
     -------
@@ -369,6 +371,8 @@ def infer_output_dim(y_train):
     train_labels : list
         Sorted list of initial classes
     """
+    if y_has_weight:
+        y_train = y_train[:,0]
     check_unique_type(y_train)
     train_labels = unique_labels(y_train)
     output_dim = len(train_labels)
@@ -376,8 +380,10 @@ def infer_output_dim(y_train):
     return output_dim, train_labels
 
 
-def check_output_dim(labels, y):
+def check_output_dim(labels, y, y_has_weight=False):
     if y is not None:
+        if y_has_weight:
+            y = y[:,0]
         check_unique_type(y)
         valid_labels = unique_labels(y)
         if not set(valid_labels).issubset(set(labels)):

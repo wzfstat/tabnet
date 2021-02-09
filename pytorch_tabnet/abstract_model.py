@@ -117,6 +117,7 @@ class TabModel(BaseEstimator):
         callbacks=None,
         pin_memory=True,
         from_unsupervised=None,
+        y_has_weight=False,
     ):
         """Train a neural network stored in self.network
         Using train_dataloader for training data and
@@ -176,7 +177,11 @@ class TabModel(BaseEstimator):
         eval_set = eval_set if eval_set else []
 
         if loss_fn is None:
-            self.loss_fn = self._default_loss
+            if y_has_weight:
+                assert len(y_train.shape) == 2 and y_train.shape[1] == 2, "y_train requires two columns: target and training weight"
+                self.loss_fn = self._loss_with_training_weight
+            else:
+                self.loss_fn = self._default_loss
         else:
             self.loss_fn = loss_fn
 
@@ -187,13 +192,14 @@ class TabModel(BaseEstimator):
             y_train,
             eval_set,
             weights,
+            y_has_weight,
         )
 
         # Validate and reformat eval set depending on training data
         eval_names, eval_set = validate_eval_set(eval_set, eval_name, X_train, y_train)
 
         train_dataloader, valid_dataloaders = self._construct_loaders(
-            X_train, y_train, eval_set
+            X_train, y_train, eval_set, y_has_weight
         )
 
         if from_unsupervised is not None:
@@ -224,7 +230,7 @@ class TabModel(BaseEstimator):
 
             # Apply predict epoch to all eval sets
             for eval_name, valid_dataloader in zip(eval_names, valid_dataloaders):
-                self._predict_epoch(eval_name, valid_dataloader)
+                self._predict_epoch(eval_name, valid_dataloader, y_has_weight)
 
             # Call method on_epoch_end for all callbacks
             self._callback_container.on_epoch_end(
@@ -482,7 +488,7 @@ class TabModel(BaseEstimator):
 
         return batch_logs
 
-    def _predict_epoch(self, name, loader):
+    def _predict_epoch(self, name, loader, y_has_weight):
         """
         Predict an epoch and update metrics.
 
@@ -505,7 +511,7 @@ class TabModel(BaseEstimator):
             list_y_true.append(y)
             list_y_score.append(scores)
 
-        y_true, scores = self.stack_batches(list_y_true, list_y_score)
+        y_true, scores = self.stack_batches(list_y_true, list_y_score, y_has_weight)
 
         metrics_logs = self._metric_container_dict[name](y_true, scores)
         self.network.train()
@@ -646,7 +652,7 @@ class TabModel(BaseEstimator):
             self.network.parameters(), **self.optimizer_params
         )
 
-    def _construct_loaders(self, X_train, y_train, eval_set):
+    def _construct_loaders(self, X_train, y_train, eval_set, y_has_weight):
         """Generate dataloaders for train and eval set.
 
         Parameters
@@ -667,9 +673,9 @@ class TabModel(BaseEstimator):
 
         """
         # all weights are not allowed for this type of model
-        y_train_mapped = self.prepare_target(y_train)
+        y_train_mapped = self.prepare_target(y_train, y_has_weight)
         for i, (X, y) in enumerate(eval_set):
-            y_mapped = self.prepare_target(y)
+            y_mapped = self.prepare_target(y, y_has_weight)
             eval_set[i] = (X, y_mapped)
 
         train_dataloader, valid_dataloaders = create_dataloaders(
@@ -709,7 +715,7 @@ class TabModel(BaseEstimator):
         self.network.virtual_batch_size = self.virtual_batch_size
 
     @abstractmethod
-    def update_fit_params(self, X_train, y_train, eval_set, weights):
+    def update_fit_params(self, X_train, y_train, eval_set, weights, y_has_weight):
         """
         Set attributes relative to fit function.
 
@@ -724,6 +730,9 @@ class TabModel(BaseEstimator):
         weights : bool or dictionnary
             0 for no balancing
             1 for automated balancing
+        y_has_weight : bool
+            True if y contains case-wise training weights as its last column
+
         """
         raise NotImplementedError(
             "users must define update_fit_params to use this base class"
@@ -751,7 +760,7 @@ class TabModel(BaseEstimator):
         )
 
     @abstractmethod
-    def prepare_target(self, y):
+    def prepare_target(self, y, y_has_weight):
         """
         Prepare target before training.
 
